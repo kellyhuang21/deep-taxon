@@ -14,6 +14,13 @@ import argparse
 import logging
 
 
+import torch.cuda
+
+def logmem(device, msg=None):
+    stats = torch.cuda.memory_stats(device)
+    print(stats['allocated_bytes.all.current'], msg)
+    pass
+
 def parse_train_size(string):
     ret = float(string)
     if ret > 1.0:
@@ -123,6 +130,7 @@ def parse_args(desc, *addl_args, argv=None):
         if isinstance(cuda_index, list):
             to_index = cuda_index[0]
         ret['device'] = torch.device(f"cuda:{to_index}")
+        logmem(ret['device'], 'parse_args')
 
 
     return ret
@@ -140,30 +148,49 @@ def check_window(window, step):
 def load_dataset(path, load=False, ohe=True, device=None, pad=False, sanity=False,
                  protein=False, window=None, step=None, classify=False, **kwargs):
     hdmfio = get_hdf5io(path, 'r')
+
+    logmem(device, 'load_dataset, before read')
     difile = hdmfio.read()
+    logmem(device, 'load_dataset, after read')
+    logmem(device, 'load_dataset, before set_torch')
+    difile.set_torch(True, device=device)
+    logmem(device, 'load_dataset, after set_torch')
+    difile.set_classify(classify)
+
+    logmem(device, 'load_dataset, before load')
     if load:
-        difile.load()
+        def tensor_tfm(data):
+            return torch.tensor(data[:].astype(np.int), device=device)
+        difile.seq_table['sequence'].target.transform(tensor_tfm)
+        difile.taxa_table[difile.label_key].transform(tensor_tfm)
+    logmem(device, 'load_dataset, after load')
 
     window, step = check_window(window, step)
     if window is not None:
         difile = WindowChunkedDIFile(difile, window, step)
 
     dataset = SeqDataset(difile, device=device, ohe=ohe, pad=pad, sanity=sanity, classify=classify)
-    #if not classify:
-    #    dataset.difile.label_key = 'embedding'
+
     return dataset, hdmfio
 
 
 def check_model(model, logger=None, device=None, cuda_index=0, **kwargs):
+    logmem(device, 'begin check_model')
     if device is not None:
         to_index = cuda_index
         if isinstance(cuda_index, list):
+            logmem(device, 'before DataParallel')
             model = nn.DataParallel(model, device_ids=cuda_index)
+            logmem(device, 'after DataParallel')
             if logger:
                 logger.info(f'running on GPUs {cuda_index}')
         if logger:
             logger.info(f'sending data to CUDA device {str(device)}')
+        logmem(device, 'before to device')
+        print(torch.cuda.memory_summary(device))
         model.to(device)
+        print(torch.cuda.memory_summary(device))
+        logmem(device, 'after to device')
     elif isinstance(cuda_index, list):
         model = nn.DataParallel(model)
     return model

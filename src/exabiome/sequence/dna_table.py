@@ -179,7 +179,7 @@ class AbstractSequenceTable(DynamicTable, TorchableMixin, metaclass=ABCMeta):
             columns.append(DynamicTableRegion('taxon', taxon, 'taxa for each sequence', taxon_table))
         kwargs['columns'] = columns
         call_docval_func(super().__init__, kwargs)
-        self.convert = self.get_numpy_conversion(maxlen=self.maxlen)
+        #self.convert = self.get_numpy_conversion(maxlen=self.maxlen)
 
     def __getitem__(self, key):
         if isinstance(key, str):
@@ -346,7 +346,7 @@ class TaxaTable(DynamicTable, TorchableMixin):
                 columns.append(VectorData(l, 'the %s for each taxon' % l, data=t))
         kwargs['columns'] = columns
         call_docval_func(super().__init__, kwargs)
-        self.convert = self.get_numpy_conversion()
+        #self.convert = self.get_numpy_conversion()
 
 
     def taxid_torch_conversion(self, num_classes, device=None):
@@ -414,6 +414,9 @@ class DeepIndexFile(Container):
         self.__n_emb_components = self.taxa_table['embedding'].data.shape[1]
         self.label_key = 'id'
 
+        self.use_torch = False
+        self.device = None
+
     def set_sanity(self, sanity, n_features=5):
         self._sanity = sanity
         self._sanity_features = n_features
@@ -434,25 +437,24 @@ class DeepIndexFile(Container):
         """
         return self.get(i)
 
-    def get(self, arg):
-        idx = self.seq_table.id[arg]
-        seq = self.seq_table['sequence'].get(arg, index=True).astype(np.int)
-        seq = self.seq_table.convert(seq)
-        seq = F.one_hot(seq).T.float()
-        label = self.seq_table['taxon'].get(arg, index=True)
-        label = self.taxa_table[self.label_key][label]
-        label = self.taxa_table.convert(label)
-        return (idx, seq, label)
-
     def __len__(self):
         return len(self.seq_table)
 
+    def set_classify(self, classify):
+        self.classify = classify
+        if self.classify:
+            self.label_key = 'id'
+        else:
+            self.label_key = 'embedding'
+
     def set_torch(self, use_torch, dtype=None, device=None, ohe=True, pad=False):
-        maxlen = None
-        if pad:
-            maxlen = np.max(self.seq_table['length'][:])
-        self.seq_table.set_torch(use_torch, dtype=dtype, device=device, ohe=ohe, maxlen=maxlen)
-        self.taxa_table.set_torch(use_torch, dtype=dtype, device=device)
+        self.use_torch = use_torch
+        self.device = device
+        #maxlen = None
+        #if pad:
+        #    maxlen = np.max(self.seq_table['length'][:])
+        #self.seq_table.set_torch(use_torch, dtype=dtype, device=device, ohe=ohe, maxlen=maxlen)
+        #self.taxa_table.set_torch(use_torch, dtype=dtype, device=device)
 
     def set_raw(self):
         self.seq_table.set_raw()
@@ -487,14 +489,33 @@ class DeepIndexFile(Container):
             return torch.tensor(data, device=device, dtype=dtype)
         return func
 
-    def load(self, torch=False, device=None):
-        for c in self.seq_table.columns:
-            c.transform(self._to_numpy)
-        for c in self.taxa_table.columns:
-            c.transform(self._to_numpy)
-        if torch:
-            self.seq_table['sequence'].target.transform(self._to_torch(device))
-            self.taxa_table['embedding'].transform(self._to_torch(device))
+    def get(self, arg):
+        idx = self.seq_table.id[arg]
+        #seq = self.seq_table['sequence'].get(arg, index=True).astype(np.int)
+        #seq = self.seq_table.convert(seq)
+        seq = self.seq_table['sequence'].get(arg, index=True)
+        if not isinstance(seq, torch.Tensor):
+            seq = torch.tensor(seq, device=self.device, dtype=torch.int64)
+        seq = F.one_hot(seq).T.float()
+
+        label = self.seq_table['taxon'].get(arg, index=True)
+        label = self.taxa_table[self.label_key][label]
+        if not isinstance(label, torch.Tensor):
+            label = torch.tensor(label, device=self.device)
+        #breakpoint()
+        return (idx, seq, label)
+
+    def load(self, device=None):
+        def tensor_tfm(data):
+            torch.tensor(data.astype(np.int), device=device)
+        seq = self.seq_table['sequence'].target.transform(tensor_tfm)
+        label = self.taxa_table[self.label_key].transform(tensor_tfm)
+
+        #self.taxa_table[self.label_key].transform(self._to_torch(device))
+        #self.taxa_table[self.label_key].transform(self._to_torch(device))
+        #if torch:
+        #    self.seq_table['sequence'].target.transform(self._to_torch(device))
+        #    self.taxa_table['embedding'].transform(self._to_torch(device))
 
 
 

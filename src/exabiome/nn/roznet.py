@@ -61,7 +61,7 @@ class RozNet(nn.Module):
 
 
 if __name__ == '__main__':
-    from .train import parse_args, run, check_model, load_dataset
+    from .train import parse_args, run, check_model, load_dataset, logmem
 
     args = parse_args("Train CNN with Spatial Pyramidal Pooling")
                       #[['-E', '--emb_nc'], dict(type=int, default=0, help='the number of embedding channels. default is no embedding')])
@@ -81,7 +81,10 @@ if __name__ == '__main__':
     else:
         n_outputs = dataset.difile.n_emb_components
 
+    logmem(args['device'], 'main before check_model')
+
     model = check_model(RozNet(input_nc, n_outputs=n_outputs), **args)
+    logmem(args['device'], 'main after check_model')
 
     args['pad'] = True
 
